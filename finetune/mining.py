@@ -130,6 +130,38 @@ class Actions:
         )
         return model.pt_model, model.tokenizer
 
+    # async def push(self, model: PreTrainedModel, tokenizer: PreTrainedTokenizerBase, competition_parameters: CompetitionParameters, retry_delay_secs: int = 60):
+    #     """Pushes the model to Hugging Face and publishes it on the chain for evaluation by validators."""
+    #     bt.logging.info(f"Pushing model for competition {competition_parameters.competition_id}")
+
+    #     # First upload the model to HuggingFace.
+    #     model_id = ModelId(namespace=self.hf_repo_namespace, name=self.hf_repo_name, competition_id=competition_parameters.competition_id)
+    #     model_id = await self.remote_model_store.upload_model(
+    #         Model(id=model_id, pt_model=model, tokenizer=tokenizer),
+    #         competition_parameters
+    #     )
+
+    #     bt.logging.success(
+    #         f"Uploaded model to hugging face. Now committing to the chain with model_id: {model_id}"
+    #     )
+
+    #     # We can only commit to the chain every 20 minutes, so run this in a loop, until
+    #     # successful.
+    #     while True:
+    #         try:
+    #             update_repo_visibility(model_id.namespace + "/" + model_id.name, private=False)
+    #             await self.model_metadata_store.store_model_metadata(
+    #                 self.wallet.hotkey.ss58_address, model_id
+    #             )
+
+    #             bt.logging.success("Committed model to the chain.")
+    #             break
+    #         except Exception as e:
+    #             update_repo_visibility(model_id.namespace + "/" + model_id.name, private=True)
+    #             bt.logging.error(f"Failed to advertise model on the chain: {e}")
+    #             bt.logging.error(f"Retrying in {retry_delay_secs} seconds...")
+    #             time.sleep(retry_delay_secs)
+
     async def push(self, model: PreTrainedModel, tokenizer: PreTrainedTokenizerBase, competition_parameters: CompetitionParameters, retry_delay_secs: int = 60):
         """Pushes the model to Hugging Face and publishes it on the chain for evaluation by validators."""
         bt.logging.info(f"Pushing model for competition {competition_parameters.competition_id}")
@@ -145,19 +177,25 @@ class Actions:
             f"Uploaded model to hugging face. Now committing to the chain with model_id: {model_id}"
         )
 
+        await self.commit_to_chain_in_loop(model_id, retry_delay_secs)
+
+    async def commit_to_chain_in_loop(self, model_id, retry_delay_secs: int = 60):
         # We can only commit to the chain every 20 minutes, so run this in a loop, until
         # successful.
         while True:
             try:
-                update_repo_visibility(model_id.namespace + "/" + model_id.name, private=False)
-                await self.model_metadata_store.store_model_metadata(
-                    self.wallet.hotkey.ss58_address, model_id
-                )
-
-                bt.logging.success("Committed model to the chain.")
+                await self.commit_to_chain(model_id)
                 break
             except Exception as e:
-                update_repo_visibility(model_id.namespace + "/" + model_id.name, private=True)
+                # update_repo_visibility(model_id.namespace + "/" + model_id.name, private=True)
                 bt.logging.error(f"Failed to advertise model on the chain: {e}")
                 bt.logging.error(f"Retrying in {retry_delay_secs} seconds...")
                 time.sleep(retry_delay_secs)
+
+
+    async def commit_to_chain(self, model_id):
+        await self.model_metadata_store.store_model_metadata(self.wallet.hotkey.ss58_address, model_id)
+        print("changing visibility to public")
+        time.sleep(60)
+        update_repo_visibility(model_id.namespace + "/" + model_id.name, private=False)
+        bt.logging.success("Committed model to the chain.")

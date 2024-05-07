@@ -140,12 +140,12 @@ class Actions:
         return model.pt_model, model.tokenizer
 
     async def push(
-        self,
-        model: PreTrainedModel,
-        tokenizer: PreTrainedTokenizerBase,
-        competition_parameters: CompetitionParameters,
-        retry_delay_secs: int = 60,
-        use_hotkey_in_hash: bool = False,
+        self, 
+        model: PreTrainedModel, 
+        tokenizer: PreTrainedTokenizerBase, 
+        competition_parameters: CompetitionParameters, 
+        retry_delay_secs: int = 60, 
+        use_hotkey_in_hash: bool = True
     ):
         """Pushes the model to Hugging Face and publishes it on the chain for evaluation by validators."""
         bt.logging.info(
@@ -189,8 +189,8 @@ class Actions:
                 time.sleep(retry_delay_secs)
 
     async def commit_to_chain(self, model_id):
-        await self.model_metadata_store.store_model_metadata(
-            self.wallet.hotkey.ss58_address, model_id
+         await self.model_metadata_store.store_model_metadata(
+            self.wallet.hotkey.ss58_address, model_id, wait_for_inclusion=True, wait_for_finalization=False
         )
         print("changing visibility to public")
         time.sleep(60)

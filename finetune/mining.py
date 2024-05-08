@@ -189,7 +189,7 @@ class Actions:
                 time.sleep(retry_delay_secs)
 
     async def commit_to_chain(self, model_id):
-         await self.model_metadata_store.store_model_metadata(
+        await self.model_metadata_store.store_model_metadata(
             self.wallet.hotkey.ss58_address, model_id, wait_for_inclusion=True, wait_for_finalization=False
         )
         print("changing visibility to public")

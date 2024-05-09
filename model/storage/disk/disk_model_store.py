@@ -56,12 +56,14 @@ class DiskModelStore(LocalModelStore):
             revision=model_id.commit,
             local_files_only=True,
             use_safetensors=True,
+            cache_dir=".tmp",
             **model_parameters.kwargs
         )
 
         tokenizer = AutoTokenizer.from_pretrained(
             pretrained_model_name_or_path=pretrained_model_name_or_path,
             revision=model_id.commit,
+            cache_dir=".tmp",
             local_files_only=True,
         )
 
@@ -72,6 +74,7 @@ class DiskModelStore(LocalModelStore):
         model_touched_by_hotkey: Dict[str, datetime.datetime],
         grace_period_seconds: int
     ):
+        return
         """Check across all of local storage and delete unreferenced models out of grace period."""
         # Expected directory structure is as follows.
         # self.base_dir/models/hotkey/models--namespace--name/snapshots/commit/config.json + other files.

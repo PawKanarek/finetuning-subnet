@@ -30,18 +30,12 @@ class ChainModelMetadataStore(ModelMetadataStore):
         if self.wallet is None:
             raise ValueError("No wallet available to write to the chain.")
         
-        data = model_id.to_compressed_str()
-
         # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
         partial = functools.partial(
-            bt.extrinsics.serving.publish_metadata,
-            self.subtensor,
+            self.subtensor.commit,
             self.wallet,
             self.subnet_uid,
-            f"Raw{len(data)}",
-            data.encode(),
-            wait_for_inclusion,
-            wait_for_finalization,
+            model_id.to_compressed_str(),
         )
         utils.run_in_subprocess(partial, 60)
 

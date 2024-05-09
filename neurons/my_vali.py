@@ -54,134 +54,137 @@ from transformers import AutoTokenizer, GenerationConfig
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
 
 
-class Validator:
+def config():
+    parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--device",
+        type=str,
+        default="cuda",
+        help="Device name.",
+    )
+    parser.add_argument(
+        "--wandb_project",
+        help="Turn on wandb logging (and log to this project)",
+    )
+    parser.add_argument(
+        "--wandb_entity",
+        help="wandb entity for logging (if --wandb_project set)",
+    )
+    parser.add_argument(
+        "--wandb_max_steps_per_run",
+        type=int,
+        help="number of steps before creating a new wandb run",
+    )
+    parser.add_argument(
+        "--blocks_per_epoch",
+        type=int,
+        default=100,
+        help="Number of blocks to wait before setting weights.",
+    )
+    parser.add_argument(
+        "--latest_cortex_steps",
+        type=int,
+        default=1,
+        help="Number of most recent Cortex steps to sample data from",
+    )
+    parser.add_argument(
+        "--latest_cortex_samples",
+        type=int,
+        default=400,
+        help="Number of most recent Cortex samples to eval against",
+    )
+    parser.add_argument(
+        "--sample_min",
+        type=int,
+        default=1,
+        help="Number of uids to eval each step.",
+    )
+    parser.add_argument(
+        "--dont_set_weights",
+        action="store_true",
+        help="Validator does not set weights on the chain.",
+        default=True,
+    )
+    parser.add_argument(
+        "--offline",
+        action="store_true",
+        help="Does not launch a wandb run, does not set weights, does not check that your key is registered.",
+        default=True,
+    )
+    parser.add_argument(
+        "--model_dir",
+        default="~/fain/.tmp",
+        help="Where to store downloaded models",
+    )
+    parser.add_argument(
+        "--netuid",
+        type=str,
+        default=constants.SUBNET_UID,
+        help="The subnet UID."
+    )
+    parser.add_argument(
+        "--attn_implementation",
+        default="flash_attention_2",
+        help="Implementation of attention to use",
+    )
+    parser.add_argument(
+        "--genesis",
+        action="store_true",
+        help="Don't sync to consensus, rather start evaluation from scratch",
+        default=True,
+    )
+    parser.add_argument(
+        "--dtype",
+        type=str,
+        default="bfloat16",
+        help="datatype to load model in, either bfloat16 or float16",
+    )
+    parser.add_argument(
+        "--grace_period_minutes",
+        type=int,
+        default=120,
+        help="Grace period before old submissions from a UID are deleted",
+    )
+    parser.add_argument(
+        "--update_delay_minutes",
+        type=int,
+        default=0,
+        help="Period between checking for new models from each UID",
+    )
+    parser.add_argument(
+        "--do_sample",
+        action="store_true",
+        help="Sample a response from each model (for leaderboard)",
+        default=False,
+    )
+    
+    bt.subtensor.add_args(parser)
+    bt.logging.add_args(parser)
+    bt.wallet.add_args(parser)
+    bt.axon.add_args(parser)
+    
+    # hacking bt config part 1
+    for a in parser._actions:
+        if a.dest == "wallet.name":
+            a.default = "cold-mine-1"
+        elif a.dest == "wallet.hotkey":
+            a.default = "hot-mine-1"
+        elif a.dest == "subtensor.network":
+            a.default = "local"
+    
+    config = bt.config(parser)
+    
+    # hacking bt config part 2
+    config.wallet.name = "cold-mine-1"
+    config.wallet.hotkey = "hot-mine-1"
+    config.subtensor.network = "local"
+    config.__is_set["wallet.name"] = True
+    config.__is_set["wallet.hotkey"] = True
+    config.__is_set["subtensor.network"] = True
+    
+    return config
 
-    @staticmethod
-    def config():
-        parser = argparse.ArgumentParser()
-        parser.add_argument(
-            "--device",
-            type=str,
-            default="cuda",
-            help="Device name.",
-        )
-        parser.add_argument(
-            "--wandb_project",
-            help="Turn on wandb logging (and log to this project)",
-        )
-        parser.add_argument(
-            "--wandb_entity",
-            help="wandb entity for logging (if --wandb_project set)",
-        )
-        parser.add_argument(
-            "--wandb_max_steps_per_run",
-            type=int,
-            help="number of steps before creating a new wandb run",
-        )
-        parser.add_argument(
-            "--blocks_per_epoch",
-            type=int,
-            default=100,
-            help="Number of blocks to wait before setting weights.",
-        )
-        parser.add_argument(
-            "--latest_cortex_steps",
-            type=int,
-            default=1,
-            help="Number of most recent Cortex steps to sample data from",
-        )
-        parser.add_argument(
-            "--latest_cortex_samples",
-            type=int,
-            default=400,
-            help="Number of most recent Cortex samples to eval against",
-        )
-        parser.add_argument(
-            "--sample_min",
-            type=int,
-            default=1,
-            help="Number of uids to eval each step.",
-        )
-        parser.add_argument(
-            "--dont_set_weights",
-            action="store_true",
-            help="Validator does not set weights on the chain.",
-            default=True,
-        )
-        parser.add_argument(
-            "--offline",
-            action="store_true",
-            help="Does not launch a wandb run, does not set weights, does not check that your key is registered.",
-            default=True,
-        )
-        parser.add_argument(
-            "--model_dir",
-            default=os.path.join(constants.ROOT_DIR, "~/fain/.tmp"),
-            help="Where to store downloaded models",
-        )
-        parser.add_argument(
-            "--netuid",
-            type=str,
-            default=constants.SUBNET_UID,
-            help="The subnet UID."
-        )
-        parser.add_argument(
-            "--attn_implementation",
-            default="flash_attention_2",
-            help="Implementation of attention to use",
-        )
-        parser.add_argument(
-            "--genesis",
-            action="store_true",
-            help="Don't sync to consensus, rather start evaluation from scratch",
-            default=True,
-        )
-        parser.add_argument(
-            "--dtype",
-            type=str,
-            default="bfloat16",
-            help="datatype to load model in, either bfloat16 or float16",
-        )
-        parser.add_argument(
-            "--grace_period_minutes",
-            type=int,
-            default=120,
-            help="Grace period before old submissions from a UID are deleted",
-        )
-        parser.add_argument(
-            "--update_delay_minutes",
-            type=int,
-            default=0,
-            help="Period between checking for new models from each UID",
-        )
-        parser.add_argument(
-            "--do_sample",
-            action="store_true",
-            help="Sample a response from each model (for leaderboard)",
-            default=False,
-        )
-        
-        bt.subtensor.add_args(parser)
-        bt.logging.add_args(parser)
-        bt.wallet.add_args(parser)
-        bt.axon.add_args(parser)
-        
-        # hacking bt config part 1
-        for a in parser._actions:
-            if a.dest == "wallet.name":
-                a.default = "cold-mine-1"
-            elif a.dest == "wallet.hotkey":
-                a.default = "hot-mine-1"
-        
-        config = bt.config(parser)
-        
-        # hacking bt config part 2
-        config.wallet.name = "cold-mine-1"
-        config.wallet.hotkey = "hot-mine-1"
-        config.__is_set["wallet.name"] = True
-        config.__is_set["wallet.hotkey"] = True
-        
-        return config
+class Validator:
 
     def state_path(self) -> str:
         """
@@ -201,8 +204,8 @@ class Validator:
         )
 
     def __init__(self):
-        self.config = Validator.config()
-        bt.logging(config=self.config)
+        self.config = config()
+        bt.logging(config=self.config, debug=True, trace=True, logging_dir=".tmp")
 
         bt.logging.info(f"Starting validator with config: {self.config}")
 
@@ -276,9 +279,6 @@ class Validator:
             self.weights.copy_(self.metagraph.C)
 
             for competition in constants.COMPETITION_SCHEDULE:
-                if competition.competition_id != "l3":
-                    continue
-                
                 bt.logging.trace(f"Building consensus state for competition {competition.competition_id}")
                 consensus = [x[0] for x in sorted(
                     [(i, val.nan_to_num(0).item()) for (i, val) in enumerate(list(self.metagraph.consensus)) if competition_ids[i] == competition.competition_id],
@@ -368,8 +368,8 @@ class Validator:
         while not self.stop_event.is_set():
             try:
                 # Get the next uid to check
-                #next_uid = next(self.miner_iterator)
-                next_uid = 192
+                next_uid = next(self.miner_iterator)
+                # next_uid = 192
                 # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
                 time_diff = (
                     dt.datetime.now() - uid_last_checked[next_uid]

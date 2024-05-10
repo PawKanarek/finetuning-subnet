@@ -52,7 +52,12 @@ from utilities.perf_monitor import PerfMonitor
 from transformers import AutoTokenizer, GenerationConfig
 
 os.environ["TOKENIZERS_PARALLELISM"] = "true"
-
+MY_UID = 192
+UID_TO_CMP = 227
+COMPARE = [MY_UID, UID_TO_CMP]
+COLD_KEY = "cold-mine-1"
+HOT_KEY = "hot-mine-1"
+NETWORK = "local"
 
 def config():
     parser = argparse.ArgumentParser()
@@ -96,7 +101,7 @@ def config():
     parser.add_argument(
         "--sample_min",
         type=int,
-        default=1,
+        default=len(COMPARE),
         help="Number of uids to eval each step.",
     )
     parser.add_argument(
@@ -113,7 +118,7 @@ def config():
     )
     parser.add_argument(
         "--model_dir",
-        default="~/fain/.tmp",
+        default=os.path.join(constants.ROOT_DIR, "model-store/"),
         help="Where to store downloaded models",
     )
     parser.add_argument(
@@ -131,7 +136,6 @@ def config():
         "--genesis",
         action="store_true",
         help="Don't sync to consensus, rather start evaluation from scratch",
-        default=True,
     )
     parser.add_argument(
         "--dtype",
@@ -166,21 +170,29 @@ def config():
     # hacking bt config part 1
     for a in parser._actions:
         if a.dest == "wallet.name":
-            a.default = "cold-mine-1"
+            a.default = COLD_KEY
         elif a.dest == "wallet.hotkey":
-            a.default = "hot-mine-1"
+            a.default = HOT_KEY
         elif a.dest == "subtensor.network":
-            a.default = "local"
+            a.default = NETWORK
+        elif a.dest == "logging.debug":
+            a.default = True
+        elif a.dest == "logging.trace":
+            a.default = True
     
     config = bt.config(parser)
     
     # hacking bt config part 2
-    config.wallet.name = "cold-mine-1"
-    config.wallet.hotkey = "hot-mine-1"
-    config.subtensor.network = "local"
+    config.wallet.name = COLD_KEY
+    config.wallet.hotkey = HOT_KEY
+    config.subtensor.network = NETWORK
+    config.logging.debug = True
+    config.logging.trace = True
     config.__is_set["wallet.name"] = True
     config.__is_set["wallet.hotkey"] = True
     config.__is_set["subtensor.network"] = True
+    config.__is_set["logging.debug"] = True
+    config.__is_set["logging.trace"] = True
     
     return config
 
@@ -205,7 +217,7 @@ class Validator:
 
     def __init__(self):
         self.config = config()
-        bt.logging(config=self.config, debug=True, trace=True, logging_dir=".tmp")
+        bt.logging(config=self.config, debug=True, trace=True, logging_dir="logs", record_log=True)
 
         bt.logging.info(f"Starting validator with config: {self.config}")
 
@@ -244,7 +256,7 @@ class Validator:
 
         # Setup a miner iterator to ensure we update all miners.
         # This subnet does not differentiate between miner and validators so this is passed all uids.
-        self.miner_iterator = MinerIterator(self.metagraph.uids.tolist())
+        self.miner_iterator = MinerIterator(COMPARE)# self.metagraph.uids.tolist())
 
         # Setup a ModelMetadataStore
         self.metadata_store = ChainModelMetadataStore(
@@ -285,7 +297,9 @@ class Validator:
                     key = lambda x: x[1],
                     reverse=True
                 )[: self.config.sample_min]]
-
+                bt.logging.trace(consensus)
+                consensus = COMPARE
+                bt.logging.trace(consensus)
                 self.uids_to_eval[competition.competition_id] = set(consensus)
                 self.pending_uids_to_eval[competition.competition_id] = set()
 
@@ -301,8 +315,9 @@ class Validator:
                         asyncio.run(self.model_updater.sync_model(hotkey))
                         if self.model_tracker.get_model_metadata_for_miner_hotkey(hotkey) is None:
                             bt.logging.warning(f"Unable to get metadata for consensus UID {uid} with hotkey {hotkey}")
-                    except:
-                        bt.logging.warning(f"Unable to sync model for consensus UID {uid} with hotkey {hotkey}")
+                    except Exception as e:
+                        traceback.print_exc()
+                        bt.logging.warning(f"Unable to sync model for consensus UID {uid} with hotkey {hotkey} {e}")
 
             # only download new models since last full consensus set
             block = self.metagraph.block.item()
@@ -369,7 +384,7 @@ class Validator:
             try:
                 # Get the next uid to check
                 next_uid = next(self.miner_iterator)
-                # next_uid = 192
+                
                 # Confirm that we haven't checked it in the last `update_delay_minutes` minutes.
                 time_diff = (
                     dt.datetime.now() - uid_last_checked[next_uid]
@@ -415,6 +430,7 @@ class Validator:
                 bt.logging.error(
                     f"Error in update loop: {e}"
                 )
+
 
         bt.logging.info("Exiting update models loop.")
 
@@ -496,7 +512,7 @@ class Validator:
 
         bt.logging.info("Synced metagraph")
         self.metagraph.load()
-        self.miner_iterator.set_miner_uids(self.metagraph.uids.tolist())
+        self.miner_iterator.set_miner_uids(COMPARE) # self.metagraph.uids.tolist())
 
     async def try_run_step(self, ttl: int):
         async def _try_run_step():
@@ -524,8 +540,8 @@ class Validator:
         # Update self.metagraph
         await self.try_sync_metagraph(ttl=60)
 
-        competition_parameters = constants.COMPETITION_SCHEDULE[self.global_step % len(constants.COMPETITION_SCHEDULE)]
-        
+        # competition_parameters = constants.COMPETITION_SCHEDULE[self.global_step % len(constants.COMPETITION_SCHEDULE)]
+        competition_parameters = constants.COMPETITION_SCHEDULE[0]
         # Add uids with newly updated models to the upcoming batch of evaluations.
         with self.pending_uids_to_eval_lock:
             self.uids_to_eval[competition_parameters.competition_id].update(self.pending_uids_to_eval[competition_parameters.competition_id])
@@ -571,7 +587,7 @@ class Validator:
 
         fixed_tokenizer = None
         if competition_parameters.tokenizer:
-            fixed_tokenizer = AutoTokenizer.from_pretrained(competition_parameters.tokenizer, cache_dir=".tmp")
+            fixed_tokenizer = AutoTokenizer.from_pretrained(competition_parameters.tokenizer)
 
         # Compute model losses on batches.
         bt.logging.debug(f"Computing losses on {uids} for competition {competition_parameters.competition_id}")

@@ -193,6 +193,6 @@ class Actions:
             self.wallet.hotkey.ss58_address, model_id, wait_for_inclusion=True, wait_for_finalization=False
         )
         print("changing visibility to public")
-        time.sleep(60)
+        time.sleep(12)
         update_repo_visibility(model_id.namespace + "/" + model_id.name, private=False)
         bt.logging.success("Committed model to the chain.")
